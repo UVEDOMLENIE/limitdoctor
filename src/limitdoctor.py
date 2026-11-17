@@ -14,7 +14,7 @@
 # 2. По MD скажи человеку, где были основные утечки, и дай простые советы — куда нажать, чтобы лимит не улетал. У каждого
 #    совета — цифра: сколько процентов недельного лимита он сэкономил бы. Коротко, без простыни; подробнее — если попросит.
 # 3. Скажи, насколько дешевле вышло бы всё уже сделанное, если бы он с самого начала так работал (раздел «А если бы»).
-#    Помоги относиться к лимиту как к деньгам: 1% недельного лимита ≈ 12 млн ХТ ≈ $12 по ценам API (вилка 6–14).
+#    Помоги относиться к лимиту как к деньгам: 1% недельного лимита ≈ 20 млн ХТ ≈ $20 по ценам API (вилка 16–27).
 # 4. В его настройках сам ничего не меняй — предложи и делай только на его «да». Набор «готовь компакт» (в MD, «Практики»)
 #    кладёт рядом команда  python <этот файл> --compact-kit ; что дальше — написано в compact_kit.md.
 # 5. В конце скажи: эти два файла он может отправить тому, кто дал ему LimitDoctor, — разберут вместе. В MD есть названия
@@ -36,7 +36,7 @@ r"""LimitDoctor — отчёт о расходе лимита Claude Code по �
   python limitdoctor.py --brief [ЧАСОВ] коротко текстом для нейросети: % недели по часам — мы и остальной аккаунт, темп, прогноз
   python limitdoctor.py --snap 41 [--h5 16] [--reset "25.10 05:00"]   сдать снимок процента Claude (весь аккаунт) и увидеть сводку
   python limitdoctor.py --snap-auto     снять процент самому: Claude Code отвечает на /usage без модели (0 токенов) — для расписания
-  ещё: --days N, --since ГГГГ-ММ-ДД, --top N, --out ПАПКА, --no-open, --plan ($ в месяц); для человека — README.md
+  ещё: --days N, --since ГГГГ-ММ-ДД [--until ГГГГ-ММ-ДД], --top N, --out ПАПКА, --no-open, --plan ($ в месяц); для человека — README.md
 
 ═══ Для нейросети и разработчика: как устроено ═══
 
@@ -47,9 +47,11 @@ r"""LimitDoctor — отчёт о расходе лимита Claude Code по �
   на что никто не смотрит, не брать. Наружу ничего не отправляется. Интерфейс по-русски и для новичка, не знающего
   Claude Code: всё непонятное объясняется подсказкой при наведении.
 
-Единица. Хайку-токен (ХТ) = цена входного токена Haiku = $1 за миллион. Цена вызова в ХТ:
+Единица. Хайку-токен (ХТ) = $1 за миллион токенов по ценам API (так стоил вход Haiku 4.5). Цена вызова в ХТ:
   вход·p0 + запись на 5 мин·p0·1,25 + запись на 1 ч·p3 + чтение кэша·p2 + выход·p1·mult[effort]/mult[effort как был],
-  где [p0, p1, p2, p3] = PARAMS["price"][модель]. ht() здесь и cost() на странице считают одинаково.
+  где [p0, p1, p2, p3] = PARAMS["price"][c[12]] — цена своей версии модели (у Haiku 5.5 выше 100 тыс. токенов в запросе —
+  вторая цена); в сценарии «на другой модели» — самая новая версия того семейства (PARAMS["latest"]).
+  ht()/prow() здесь и cost()/prw() на странице считают одинаково.
 
 Логи. ~/.claude/projects/<папка>/<id>.jsonl (и $CLAUDE_CONFIG_DIR, ~/.config/claude), агенты — <id>/subagents/agent-*.jsonl.
   Берутся записи type=assistant с message.id и message.usage. Один ответ пишется несколькими строками с одним id:
@@ -60,7 +62,8 @@ r"""LimitDoctor — отчёт о расходе лимита Claude Code по �
 
 Вызов — массив k (load_chat):
   [0 время, 1 модель 0..3 по FAM, 2 effort 0..4 по EFF или −1, 3 вход, 4 запись 5 мин, 5 запись 1 ч, 6 чтение кэша,
-   7 выход, 8 думала мс, 9 агент 0/1, 10 инструменты строкой, 11 = 1, если с прошлого вызова обновился Claude Code]
+   7 выход, 8 думала мс, 9 агент 0/1, 10 инструменты строкой, 11 = 1, если с прошлого вызова обновился Claude Code
+   (иначе 0), 12 версия модели — номер строки цены в PARAMS["price"] (variant())]
   Чат: {id, title, k, h — обвязка}. Одинаковые списки скиллов хранятся один раз (SK: имена и списки [имя, символов]).
 
 Размер лимита — константа PARAMS["cap"]. С процентами Claude не синхронизируемся (решение автора, 08.10): Claude
@@ -101,6 +104,9 @@ MD для нейросети (md_report()). Тот же счёт, что на с
   и список чатов, false — один чат), __GEN__, __NAME__, __VER__ вклеиваются данные. Состояние S: c — открытый чат
   (−1 — дашборд), m/e — сценарий модель/effort (−1 — как было), w — окно процентов, hm — период тепловой карты;
   клик меняет S, draw() перерисовывает всё.
+  Период (только --serve): rngHtml() — кнопки «Сутки / 2 дня / Неделя / Всё время», поля «от / до» и полоса дней из
+  P.strip (расход каждого дня за всё время, тыс. ХТ по семействам): по ней тянут мышкой или двигают ручки. Всё уходит
+  на /period, сервер пересобирает страницу из логов в памяти; открытый чат возвращается через #c=id.
   central() сверху вниз: троица — «а если бы» на одной модели, «Чаты в отчёте съели» с прогнозом к сбросу (fcLine),
   «Подписка окупилась» (roiCard: ХТ/1e6 = $ против доли plan за те же дни); по часам (hourHtml: столбик — час, снизу наши чаты, сверху штриховкой то, чего не видно в наших логах, — прирост процента Claude
   между замерами минус наш расход, поровну на часы промежутка; над ним полоса «моя часть аккаунта» на последний замер
@@ -118,7 +124,7 @@ MD для нейросети (md_report()). Тот же счёт, что на с
 import argparse, json, math, os, re, sys, time, datetime as dt
 from pathlib import Path
 
-NAME, VER = "LimitDoctor", "0.5.3"
+NAME, VER = "LimitDoctor", "0.5.4"
 if sys.stdout:                                   # под pythonw (расписание Windows) вывода нет
     sys.stdout.reconfigure(encoding="utf-8")
 HERE = Path(__file__).resolve().parent          # src\
@@ -134,21 +140,34 @@ ACCT = REPORTS / "account.jsonl"           # проценты Claude по вре
 FAM = ["haiku", "sonnet", "opus", "fable"]
 EFF = ["low", "medium", "high", "xhigh", "max"]
 PARAMS = {
-    # ХТ за один токен: вход, выход, чтение кэша, запись кэша на 1 час (запись на 5 минут = 1,25 × вход). Порядок — FAM.
-    # Это цены Claude API на 02.10.2026 в долях цены входа Haiku 4.5 ($1 за миллион), поэтому 1 ХТ = $0,000001.
-    "price": [[1, 5, 0.1, 2], [2, 10, 0.2, 4], [4, 20, 0.2, 8], [10, 50, 0.25, 20]],
+    # Цены Claude API, $ за миллион токенов = ХТ за токен: вход, выход, чтение кэша, запись кэша на 1 час (запись на
+    # 5 минут = 1,25 × вход). Строка — версия модели (сверено со справкой Claude API 17.11.2026). У Haiku 5.5 после
+    # порога 100 тыс. токенов в запросе — вторая четвёрка цен; чтение и запись её кэша в справке не названы, взяты по
+    # обычным долям входа (0,1 и 2) — оценка. 1 ХТ = $0,000001.
+    "price": [[1, 5, 0.1, 2], [0.1, 0.5, 0.01, 0.2, 100_000, 0.5, 2.5, 0.05, 1], [3, 15, 0.3, 6], [2, 10, 0.2, 4],
+              [2, 10, 0.1, 4], [15, 75, 1.5, 30], [5, 25, 0.5, 10], [4, 20, 0.2, 8], [10, 50, 0.25, 20], [8, 40, 0.2, 16]],
+    "pname": ["Haiku 4.5", "Haiku 5.5", "Sonnet 4.x", "Sonnet 5", "Sonnet 5.5", "Opus 4 / 4.1", "Opus 4.5–5", "Opus 5.5",
+              "Fable 5 / 5.1", "Fable 5.2"],
+    # имя из лога → строка цены; нет точной версии — «семейство-мажор», нет и его — самая новая в семействе (latest)
+    "model_price": {"haiku-4-5": 0, "haiku-5-5": 1, "sonnet-4": 2, "sonnet-5": 3, "sonnet-5-5": 4, "opus-4": 5,
+                    "opus-4-5": 6, "opus-4-6": 6, "opus-4-7": 6, "opus-4-8": 6, "opus-5": 6, "opus-5-5": 7,
+                    "fable-5": 8, "fable-5-1": 8, "fable-5-2": 9},
+    "latest": [1, 4, 7, 9],                 # самая новая версия каждого семейства (FAM) — для «а если бы на другой модели»
+    "win200": [0],                          # окно контекста 200 тыс. (у остальных — 1 млн)
     # Множитель выходных токенов (ответ и мысли) по effort low, medium, high, xhigh, max относительно medium.
     # Замер 08.10 (--effort-check, 11 тыс. вызовов за 30 дней, средний выход при похожем контексте):
     # Opus 0,67 / 1 / 1,09 / 1,51 / 3,54; Sonnet high 1,16, xhigh 2,09, max 4,57, low — вызовов мало, взят как у Opus.
     # Fable — вызовов мало, взят как Opus. У Haiku effort нет. Ряд обязан расти: иначе low выходит дороже medium.
     "mult": [[1, 1, 1, 1, 1], [0.65, 1, 1.15, 2.1, 4.6], [0.65, 1, 1.1, 1.5, 3.5], [0.65, 1, 1.1, 1.5, 3.5]],
     # Размер лимита плана Max ($200) в ХТ: за 5 часов и за неделю; сутки = неделя / 7. Claude его не сообщает.
-    # Перекалибровка 26.10 (замеры account.jsonl 12–26.10, 50 окон ≥2 ч, регрессия «прирост % = чужой фон·часы + ХТ/коэффициент»):
-    # 1% недели ≈ 12 млн ХТ (вилка 6–14) → неделя ≈ 1,2 млрд. Раньше стояло 3,5 млрд (замер 07.10 и аудит 19.10 — 35 млн на 1%);
-    # расхождение не объяснено: мог измениться лимит или вес моделей. 5 часов оставлен прежним: счётчик 5 часов ненадёжен
-    # (сбрасывается, в нём больше всего чужого), по окнам вышло 2,1–6,9 млн на 1% — нижняя граница. Другой план — другой лимит.
-    "cap": [550_000_000, 1_200_000_000],
-    "cap_week_fork": [600_000_000, 1_400_000_000],    # неделя при 1% = 6 и 14 млн ХТ: вилка процентов = ХТ / эти числа
+    # Калибровка 17.11 — по ночам: с 02 до 08 лимит тратит только этот компьютер, днём — ещё и другие на том же аккаунте.
+    # Замеры процента Claude 25.09–16.11 (снимки и ответы get_usage из логов), окна 02–08 от часа: 11 ночей, +15 п.п.
+    # при нашем расходе 334 млн ХТ (цены 0.5.4) → 1% недели ≈ 22 млн, по ночам 6–27, медиана ≈19; взято 20 → неделя ≈ 2 млрд.
+    # Днём (10–24) те же замеры дают 7 млн на 1% — это чужой расход, не наш. Раньше: 12 млн (26.10, регрессия с чужим фоном)
+    # и 35 млн (07.10). 5 часов оставлен прежним: счётчик 5 часов ненадёжен (сбрасывается, в нём больше всего чужого).
+    # Другой план — другой лимит. Снимки процента пишет --snap-auto по расписанию — со временем ночей станет больше.
+    "cap": [550_000_000, 2_000_000_000],
+    "cap_week_fork": [1_600_000_000, 2_700_000_000],  # неделя при 1% = 16 и 27 млн ХТ: вилка процентов = ХТ / эти числа
     "summary_tokens": 10000,                # выжимка компакта, токенов (сценарий «компакт перед холодным стартом»)
     "chars_per_token": 3.5,                 # обвязка оценивается по длине текста в логе
     "cold": {"min_write": 25000, "min_share": 0.45},   # холодный старт: запись кэша ≥ max(25 тыс., 45% контекста)
@@ -182,6 +201,18 @@ def fam(model):
             return i
 
 
+_PV = {}
+
+
+def variant(model):
+    """Строка цены (PARAMS["price"]) по имени модели из лога: claude-opus-4-8 → «opus-4-8», claude-opus-4-20250514 → «opus-4»."""
+    if model not in _PV:
+        m = re.search(r"(haiku|sonnet|opus|fable)-(\d+)(?:-(\d{1,2})(?!\d))?", model or "")
+        V = PARAMS["model_price"]
+        _PV[model] = None if not m else V.get(f"{m[1]}-{m[2]}-{m[3]}", V.get(f"{m[1]}-{m[2]}", PARAMS["latest"][FAM.index(m[1])]))
+    return _PV[model]
+
+
 def tool_name(n):
     return n.split("__")[-1] if n.startswith("mcp__") else n
 
@@ -190,12 +221,19 @@ def epoch(ts):
     return int(dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
 
 
+def prow(c, m=None):
+    """Цены вызова [вход, выход, чтение кэша, запись на 1 ч]: своей версии модели или (m — другое семейство) самой новой
+    версии семейства m; у Haiku 5.5 выше порога токенов в запросе — вторая четвёрка."""
+    r = PRICE[c[12] if m is None or m == c[1] else PARAMS["latest"][m]]
+    return r[5:9] if len(r) > 4 and c[3] + c[4] + c[5] + c[6] > r[4] else r
+
+
 def ht(c, m=None):
     """Цена вызова в ХТ; m — другая модель при том же effort (выход пересчитан множителями, как на странице)."""
     m0 = c[1]
-    m = m0 if m is None else m
-    p, e = PRICE[m], (c[2] if c[2] >= 0 else 1)
-    om = PARAMS["mult"][m][e] / PARAMS["mult"][m0][e]
+    mm = m0 if m is None else m
+    p, e = prow(c, m), (c[2] if c[2] >= 0 else 1)
+    om = PARAMS["mult"][mm][e] / PARAMS["mult"][m0][e]
     return c[3] * p[0] + c[4] * p[0] * 1.25 + c[5] * p[3] + c[6] * p[2] + c[7] * om * p[1]
 
 
@@ -360,7 +398,7 @@ def parse(path, agent, seen, sid):
         w5, w1 = cc.get("ephemeral_5m_input_tokens", 0), cc.get("ephemeral_1h_input_tokens", 0)
         if not cc:
             w1 = u.get("cache_creation_input_tokens", 0)
-        r = calls.setdefault(m["id"], {"ts": e["timestamp"], "m": f, "e": -1, "i": 0, "w5": 0, "w1": 0, "r": 0, "o": 0, "th": 0, "a": agent, "tl": []})
+        r = calls.setdefault(m["id"], {"ts": e["timestamp"], "m": f, "pv": variant(m.get("model")), "e": -1, "i": 0, "w5": 0, "w1": 0, "r": 0, "o": 0, "th": 0, "a": agent, "tl": []})
         r["ts"] = min(r["ts"], e["timestamp"])
         r["v"] = e.get("version") or r.get("v")
         eff = e.get("perTurnEffort") or e.get("effort")
@@ -385,10 +423,10 @@ def load_chat(log, since=0, seen=None):
     H["cwd"] = cwd
     k, pv = [], None
     for t, r in sorted(((epoch(r["ts"]), r) for r in calls.values()), key=lambda x: x[0]):
-        c = [t, r["m"], r["e"], r["i"], r["w5"], r["w1"], r["r"], r["o"], int(r["th"]), r["a"], ", ".join(r["tl"][:4])[:48]]
+        c = [t, r["m"], r["e"], r["i"], r["w5"], r["w1"], r["r"], r["o"], int(r["th"]), r["a"], ", ".join(r["tl"][:4])[:48], 0, r["pv"]]
         if not r["a"]:                       # c[11] = 1: Claude Code обновился с прошлого вызова основной цепочки
             if pv and r.get("v") and r["v"] != pv:
-                c.append(1)
+                c[11] = 1
             pv = r.get("v") or pv
         if t >= since:
             k.append(c)
@@ -644,22 +682,34 @@ def snap_auto():
     в карточке использования приложения. Ключи и API не трогаем: спрашивает сам Claude Code своим входом. Для расписания.
     Запуск голый: без MCP-серверов (--strict-mcp-config и пустой список — иначе поднимается всё, вплоть до голосового) и без
     хуков (disableAllHooks), без лога сессии, без окна. Если /usage не распознан и запрос ушёл в модель (num_turns > 0 или
-    есть цена) или в ответе нет процента — пишется snap_auto.off в папку отчётов, и дальше запуски молчат, пока его не удалить:
-    поломка не жжёт модель каждые полчаса. Модель на этот случай — Haiku."""
+    есть цена) — пишется snap_auto.off в папку отчётов, и дальше запуски молчат, пока его не удалить: поломка не жжёт
+    модель каждые полчаса. Модель на этот случай — Haiku. Ответ без процента, но и без модели, — только пропуск снимка
+    (7.11 такой разовый сбой выключил снимки на 10 дней)."""
     import subprocess, shutil
     off = REPORTS / "snap_auto.off"
+
+    def fail(msg, extra=""):                 # под pythonw (расписание) вывода нет: причина последнего сбоя — в файл
+        try:
+            (REPORTS / "snap_auto.last.txt").write_text(f"{fmt(time.time())}: {msg}\n{extra}", encoding="utf-8")
+        except OSError:
+            pass
+        sys.exit(msg)
     if off.exists():
         sys.exit(f"снимки выключены после сбоя ({off}); удалить файл — включить снова")
     exe = shutil.which("claude")
     if not exe:
-        sys.exit("не нашла claude в PATH")
+        fail("не нашла claude в PATH", os.environ.get("PATH", ""))
     cmd = [exe, "-p", "/usage", "--no-session-persistence", "--model", "haiku", "--output-format", "json",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--settings", '{"disableAllHooks":true}']
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=120,
+        # Долгий токен из переменной CLAUDE_CODE_OAUTH_TOKEN (claude setup-token) годится для работы, но /usage с ним
+        # показывает только сводку расходов, без процентов подписки (17.11: так снимки молча не снимались с 07.11).
+        # Ребёнку его не передаём — Claude Code берёт свой обычный вход. Значение не читаем.
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_OAUTH_TOKEN"}
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=120, env=env,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.TimeoutExpired) as e:
-        sys.exit(f"claude /usage не ответил: {e}")
+        fail(f"claude /usage не ответил: {e}")
     try:
         d = json.loads(r.stdout)
     except json.JSONDecodeError:
@@ -667,11 +717,13 @@ def snap_auto():
     text = d.get("result") or ""
     wk = re.search(r"week \(all models\):\s*(\d+(?:\.\d+)?)%", text)
     h5 = re.search(r"session:\s*(\d+(?:\.\d+)?)%", text)
-    if d.get("num_turns") or d.get("total_cost_usd") or not wk:
+    if d.get("num_turns") or d.get("total_cost_usd"):
         REPORTS.mkdir(parents=True, exist_ok=True)
-        off.write_text(f"{fmt(time.time())}: /usage ответил не так (ушёл в модель или нет процента) — снимки выключены.\n"
-                       f"Удалить этот файл — включить снова.\n\n{r.stdout[:800]}\n{r.stderr[:400]}", encoding="utf-8")
-        sys.exit(f"сбой /usage — снимки выключены: {off}")
+        off.write_text(f"{fmt(time.time())}: /usage ушёл в модель — снимки выключены.\n"
+                       f"Удалить этот файл — включить снова.\n\n{text[:600]}\n{r.stderr[:400]}", encoding="utf-8")
+        fail(f"сбой /usage — снимки выключены: {off}")
+    if not wk:
+        fail("в ответе /usage нет процента недели — снимок пропущен (модель не вызывалась)", f"{exe}\nresult: {text[:800]!r}\n{r.stderr[:800]}")
     snap(wk.group(1), h5.group(1) if h5 else None, src="usage")
 
 
@@ -768,7 +820,8 @@ def brief(hours=24):
 
 def serve(a):
     """Страница на этом компьютере: слушает только 127.0.0.1; «/» — последняя сборка, «/rescan» — перечитать логи и собрать
-    заново, «/period?p=1|2|w|s&d=ГГГГ-ММ-ДД» — тот же снимок логов за другой период (из памяти, за секунды).
+    заново, «/period?p=1|2|7|w|all|r&from=ГГГГ-ММ-ДД&to=ГГГГ-ММ-ДД&c=чат» — тот же снимок логов за другой период
+    (из памяти, за секунды; c — открытый чат, вернётся через #c=).
     Ничего не пишет на диск и никуда не ходит. Выключить — Ctrl+C или закрыть окно."""
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
     import threading, webbrowser, socket, urllib.parse
@@ -783,13 +836,22 @@ def serve(a):
             if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             super().server_bind()
+    if not (a.all or a.since or a.days):
+        a.days = 7                               # в админке по умолчанию — последние 7 дней (полоса дней покажет сбросы лимита)
     st, lock, port = {"a": a, "raw": None}, threading.Lock(), a.serve
 
     def getpool(s0):
-        # чтение логов — почти всё время сборки; пул держим в памяти, смена периода берёт копии чатов (build их обрезает)
-        if st["raw"] is None or s0 < st["s0"]:
-            st["raw"], st["s0"], st["t"] = collect(s0), s0, dt.datetime.now()
+        # чтение логов — почти всё время сборки. Читаем всё сразу: за всё время выходит столько же, сколько за 4 недели
+        # (17.11: ≈30 с, 50 тыс. вызовов), зато полоса дней видит всю историю. Смена периода берёт копии чатов из памяти.
+        if st["raw"] is None:
+            st["raw"], st["t"] = collect(0), dt.datetime.now()
         return [dict(ch) for ch in st["raw"]]
+
+    def day(x):
+        try:
+            return dt.date.fromisoformat(x).isoformat()
+        except ValueError:
+            return None
 
     def rebuild(fresh=False):
         if fresh:
@@ -807,16 +869,18 @@ def serve(a):
                 q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                 with lock:
                     if self.path.startswith("/period"):
-                        n, v, d = argparse.Namespace(**vars(st["a"])), q.get("p", ["w"])[0], q.get("d", [""])[0]
-                        n.all, n.days, n.since = v == "all", float(v) if v in ("1", "2") else None, None
-                        if v == "s" and re.fullmatch(r"\d{4}-\d\d-\d\d", d):
-                            n.since = d
+                        n, v = argparse.Namespace(**vars(st["a"])), q.get("p", ["7"])[0]
+                        n.all, n.days, n.since, n.until = v == "all", float(v) if v in ("1", "2", "7") else None, None, None
+                        f, t = (day(q.get(x, [""])[0]) for x in ("from", "to"))
+                        if v == "r" and f and t:
+                            n.since, n.until = min(f, t), max(f, t)
                         st["a"] = n
                         rebuild()
                     else:
                         rebuild(fresh=True)
+                c = q.get("c", [""])[0]
                 self.send_response(303)
-                self.send_header("Location", "/")
+                self.send_header("Location", "/#c=" + c if re.fullmatch(r"[\w-]{1,40}", c) else "/")
                 return self.end_headers()
             if self.path.split("?")[0] not in ("/", "/index.html"):
                 return self.send_error(404)
@@ -867,7 +931,7 @@ def md_report(chats, since):
         return int((d - dt.timedelta(days=d.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
     def at_eff(c, top):              # тот же вызов при effort не выше top (меняется только выход)
-        return ht(c) if c[2] <= top else ht(c) + c[7] * PRICE[c[1]][1] * (MU[c[1]][top] / MU[c[1]][c[2]] - 1)
+        return ht(c) if c[2] <= top else ht(c) + c[7] * prow(c)[1] * (MU[c[1]][top] / MU[c[1]][c[2]] - 1)
     R, WK, MCP, MEM, SKN = [], {}, {}, {}, 0
     for ch in chats:
         k = [c for c in ch["k"] if c[0] >= since]
@@ -881,20 +945,20 @@ def md_report(chats, since):
             c, pc = k[main[p]], k[main[p - 1]]
             wr, x, xp, gap = c[4] + c[5], ctx(c), ctx(pc), c[0] - pc[0]
             if wr >= max(CO["min_write"], CO["min_share"] * x):
-                ev.append((p, wr, x, xp, "cmp" if x < .6 * xp else "idle" if gap >= 3540 else "sw" if c[1] != pc[1] else "upd"
-                           if len(c) > 11 else "cmp" if x < .9 * xp else "ttl5" if gap >= 300 and pc[4] > pc[5] else "unk"))
+                ev.append((p, wr, x, xp, "cmp" if x < .6 * xp else "idle" if gap >= 3540 else "sw" if c[12] != pc[12] else "upd"
+                           if c[11] else "cmp" if x < .9 * xp else "ttl5" if gap >= 300 and pc[4] > pc[5] else "unk"))
         r = {"pen": {}, "idle": 0.0, "sw": 0.0, "why": {}}
         for n, (p, wr, x, xp, cs) in enumerate(ev):
-            c, pr = k[main[p]], PRICE[k[main[p]][1]]
+            c, pr = k[main[p]], prow(k[main[p]])
             pw = (c[4] * pr[0] * 1.25 + c[5] * pr[3]) / wr
             pe = max(0, wr - g) * (pw - pr[2])
             r["pen"][main[p]] = pe
             r["why"][cs] = r["why"].get(cs, 0) + 1
             sv, xn = 0.0, fl0 + SUM
             if xp > xn and cs != "cmp":          # «компакт перед паузой»: записать выжимку, а не всю переписку
-                pp, end = PRICE[k[main[p - 1]][1]], (ev[n + 1][0] if n + 1 < len(ev) else len(main))
+                pp, end = prow(k[main[p - 1]]), (ev[n + 1][0] if n + 1 < len(ev) else len(main))
                 sv = (wr * pw + c[6] * pr[2] - (xp * pp[2] + SUM * pp[1] + (xn + max(0, x - xp)) * pr[3])
-                      + sum((xp - xn) * PRICE[k[main[q]][1]][2] for q in range(p + 1, end)))
+                      + sum((xp - xn) * prow(k[main[q]])[2] for q in range(p + 1, end)))
             if cs == "sw":
                 r["sw"] += pe
             elif cs == "idle" and sv > 0:
@@ -902,7 +966,7 @@ def md_report(chats, since):
         tot = hz = conv = out = ag = big = 0.0
         mm, ee = [0.0] * 4, {}
         for i, c in enumerate(k):
-            pr = PRICE[c[1]]
+            pr = prow(c)
             rd, wr, ou = c[6] * pr[2], c[3] * pr[0] + c[4] * pr[0] * 1.25 + c[5] * pr[3], c[7] * pr[1]
             x, base = rd + wr + ou, max(0, rd + wr - r["pen"].get(i, 0))
             s = min(1, fl0 / max(1, ctx(c))) if fl0 else 0
@@ -963,11 +1027,11 @@ def md_report(chats, since):
          "Нейросеть: по этому файлу скажи человеку, где были основные утечки, и дай простые советы, у каждого — сколько процентов "
          "недельного лимита он сэкономил бы (раздел «А если бы»); скажи, насколько дешевле вышло бы всё сделанное. Коротко, без простыни. "
          "HTML рядом — для человека, его не читай.", "",
-         "Единица — ХТ (хайку-токен): цена входного токена Haiku, $1 за миллион по ценам API; все модели пересчитаны в ХТ. "
+         "Единица — ХТ (хайку-токен): $1 за миллион токенов по ценам API (так стоил вход Haiku 4.5); каждый вызов — по цене своей версии модели. "
          f"Лимит плана Max ($200) — оценка ≈{f1(PARAMS['cap'][1] / 1e9)} млрд ХТ в неделю и ≈{PARAMS['cap'][0] / 1e6:.0f} млн за 5 часов "
-         "(Claude размер не сообщает), поэтому 1% недели ≈ 12 млн ХТ ≈ $12; проценты в этом отчёте приблизительные, вилка 6–14 млн на 1%, "
-         "то есть реальные проценты могут быть ниже в 1,2 раза и выше вдвое. Откуда число: перекалибровка автора 26.10 по замерам Claude и "
-         "логам (50 окон, регрессия с чужим фоном); раньше стояло 35 млн на 1%, и расхождение с тем замером не объяснено. Логи старше ~30 дней Claude Code обычно удаляет "
+         "(Claude размер не сообщает), поэтому 1% недели ≈ 20 млн ХТ ≈ $20; проценты в этом отчёте приблизительные, вилка 16–27 млн на 1%, "
+         "то есть реальные проценты могут быть ниже в 1,35 раза и выше в 1,25 раза. Откуда число: калибровка автора 17.11 по ночным замерам Claude и "
+         "логам (с 2 до 8 утра, когда лимит тратит только этот компьютер; 11 ночей); раньше стояло 12 млн на 1% (регрессия с чужим фоном) и 35 млн. Логи старше ~30 дней Claude Code обычно удаляет "
          "сам (настройка cleanupPeriodDays), так что «всё время» — сколько логов осталось.", "",
          "## Итого", "",
          f"- Чатов {len(R)}, вызовов модели {S('n')}. Всего {M(T)} ХТ = {pw(T)} недельного лимита ≈ "
@@ -1045,7 +1109,7 @@ MD_PRACT = """## Практики — откуда брать рекоменда
 Как тратится лимит. Каждый вызов модели заново читает весь контекст: обвязку и всю переписку. Чтение из кэша стоит 0,1 цены
 входа, но на большом контексте и это много; запись в кэш — 1,25–2 цены входа. Кэш живёт около часа (иногда 5 минут) и
 привязан к модели. Выход (ответ и мысли) в 5 раз дороже входа, effort меняет именно его. За токен Sonnet в 2 раза дороже
-Haiku, Opus — в 4, Fable — в 10.
+Haiku 4.5, Opus — в 4, Fable — в 8–10; Haiku 5.5 в 10 раз дешевле Haiku 4.5 (на запросах до 100 тыс. токенов).
 
 1. Модель под задачу. Механика — поиск по коду, правки по образцу, переименования, разбор логов, тесты по шаблону — Sonnet
    или Haiku. Opus — архитектура и сложная отладка, где дешёвая модель ходит кругами. Агентам на механику — дешёвую модель.
@@ -1286,6 +1350,7 @@ def main():
     ap.add_argument("--session", help="то же, что --chat ID")
     ap.add_argument("--days", type=float, help="за сколько дней (по умолчанию — текущая неделя лимита или 7 дней)")
     ap.add_argument("--since", help="ГГГГ-ММ-ДД вместо --days")
+    ap.add_argument("--until", help="ГГГГ-ММ-ДД: по какой день включительно (вместе с --since)")
     ap.add_argument("--all", action="store_true", help="за всё время, что есть в логах")
     ap.add_argument("--compact-kit", action="store_true", help="положить рядом хук и правило «готовь компакт» (сам ничего не включает)")
     ap.add_argument("--top", type=int, default=60); ap.add_argument("--out"); ap.add_argument("--no-open", action="store_true")
@@ -1337,12 +1402,13 @@ def main():
 
 
 def per_of(a):
-    """Период для переключателя на странице: [1 | 2 — суток, w — неделя лимита, s — с даты, all — всё время, d — другое число суток, дата]."""
+    """Период для страницы: [1 | 2 | 7 — суток, w — неделя лимита, r — с даты (по дату — P.until), all — всё время,
+    d — другое число суток; дата]."""
     if a.all:
         return ["all", ""]
     if a.since:
-        return ["s", a.since]
-    if a.days in (1, 2):
+        return ["r", a.since]
+    if a.days in (1, 2, 7):
         return [str(int(a.days)), ""]
     return ["d", f"{a.days:g}"] if a.days else ["w", ""]
 
@@ -1351,7 +1417,7 @@ def build(a, getpool=None, gen=None):
     """Собрать отчёт: (страница, имя файла, строки итога, MD для нейросети или None). Нечего показать — SystemExit с причиной.
     getpool(since) — откуда взять чаты (по умолчанию collect: читает логи); gen() — время снимка логов для страницы."""
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")     # с секундами: два отчёта за минуту не затирают друг друга
-    hrs = md = None
+    hrs = md = strip = until = None
     one = a.session or a.chat
     if one is not None and not a.admin:
         ch = load_chat(pick_log(one))
@@ -1362,10 +1428,20 @@ def build(a, getpool=None, gen=None):
         # по умолчанию — та же неделя, что считает Claude (от сброса лимита), если сброс известен из замеров; иначе 7 дней
         week0 = caps()[1].get("week0")
         since = 0 if a.all else int(time.mktime(dt.date.fromisoformat(a.since).timetuple())) if a.since else int(time.time() - (a.days or 7) * 86400) if a.days or not week0 else int(week0)
+        until = int(time.mktime((dt.date.fromisoformat(a.until) + dt.timedelta(days=1)).timetuple())) if getattr(a, "until", None) else None
+        until = until if until and until < time.time() else None        # по сегодня включительно — это «до сейчас»
         # тепловая карта «день недели × час» — за 4 недели, чтобы проступила привычка; логи читаются одним проходом
         h0, now = int(time.time() - 28 * 86400), time.time()
         pool, hv, hc, first = (getpool or collect)(min(since, h0)), [0.0] * 168, [{} for _ in range(168)], now
         bd = brain(pool)                       # мозготокены за 14 суток — до того, как вызовы обрежутся по периоду
+        if getpool:                            # админка: полоса дней за всё время — расход дня по семействам, тыс. ХТ
+            sd = {}
+            for ch in pool:
+                for c in ch["k"]:
+                    sd.setdefault(dt.date.fromtimestamp(c[0]), [0.0] * 4)[c[1]] += ht(c)
+            d0 = min(sd, default=dt.date.fromtimestamp(now))
+            strip = {"d0": int(time.mktime(d0.timetuple())), "v": [[round(x / 1e3) for x in sd.get(d0 + dt.timedelta(days=i), [0] * 4)]
+                                                                for i in range((dt.date.fromtimestamp(now) - d0).days + 1)]}
         if a.all:                     # всё, что есть в логах: с первого вызова (страница считает дни периода от since)
             since = min((c[0] for ch in pool for c in ch["k"]), default=int(now)) // 3600 * 3600
         # по часам за 14 суток (виджет «по часам»: сутки / 3 дня / неделя и прошлая неделя для замеров до сброса)
@@ -1383,7 +1459,7 @@ def build(a, getpool=None, gen=None):
                     if 0 <= r < 336:
                         rv[r] += x
                         rw[r][j] = rw[r].get(j, 0) + x
-            ch["k"] = [c for c in ch["k"] if c[0] >= since]
+            ch["k"] = [c for c in ch["k"] if c[0] >= since and (until is None or c[0] < until)]
         # в каждой клетке — три самых прожорливых чата (для подсказки); имена — в общей таблице
         names, top = {}, []
         for cell in hc:
@@ -1411,7 +1487,7 @@ def build(a, getpool=None, gen=None):
     cap, info = caps()
     acct = acct_rows(since - 7 * 86400) if admin == "true" else []      # [время, % недели, % 5 часов] — весь аккаунт по Claude
     P = dict(PARAMS, cap=cap, cal=info, since=(since if admin == "true" else 0), now=int(time.time()), heat=heat, hrs=hrs,
-             plan=a.plan or PARAMS["plan_usd_month"], acct=acct, brain=bd, per=per_of(a))
+             plan=a.plan or PARAMS["plan_usd_month"], acct=acct, brain=bd, per=per_of(a), until=until or 0, strip=strip)
     page = PAGE
     for k, v in (("__SK__", dump(SK)), ("__CHATS__", dump(chats)), ("__ADMIN__", admin), ("__GEN__", ((gen and gen()) or dt.datetime.now()).strftime("%d.%m.%Y %H:%M")),
                  ("__PARAMS__", dump(P)), ("__NAME__", NAME), ("__VER__", VER)):
@@ -1612,6 +1688,26 @@ h2{font-size:13px;font-weight:600;color:var(--mut);margin:0 0 10px}
 #tip .cf i{position:absolute;right:0;top:0;bottom:0;background:var(--pn);border-radius:0 4px 4px 0}
 #tip .tl{display:flex;justify-content:space-between;gap:12px}#tip .tl span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #tip .dot,.lead .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;background:var(--c)}
+.rng{margin-top:14px}
+.rtop{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px}
+.rtop .seg{flex-wrap:wrap}.rtop .seg button{font-size:14px;padding:6px 14px;flex:none}
+.rlab{font-size:15px;font-weight:600;flex:1 1 240px;min-width:0}.rlab b{color:var(--heat)}
+.rin{display:flex;flex-wrap:wrap;gap:8px 12px;color:var(--mut);font-size:12.5px}
+.rin input{font:inherit;font-size:13px;border:1px solid var(--bd);border-radius:7px;background:var(--card);color:var(--fg);color-scheme:light dark;padding:3px 6px;margin-left:4px}
+.rs{position:relative;height:72px;margin:16px 6px 0;touch-action:none;user-select:none;cursor:crosshair}
+.rbars{position:absolute;inset:0;display:flex;gap:1px}
+.rbars i{flex:1;min-width:0;display:flex;flex-direction:column-reverse;opacity:.42;border-bottom:2px solid var(--bd)}
+.rbars i.on{opacity:1}.rbars i:hover{opacity:.75}.rbars i.on:hover{opacity:1}
+.rbars u{display:block;flex:none}
+.rb{position:absolute;top:-6px;bottom:-6px;background:rgba(55,138,221,.08);border:2px solid #378ADD;border-radius:7px;pointer-events:none}
+.rh{position:absolute;top:-10px;bottom:-10px;width:14px;margin-left:-7px;background:#fff;border-radius:5px;box-shadow:0 1px 5px rgba(0,0,0,.4);cursor:ew-resize;z-index:2}
+.rh::after{content:'';position:absolute;left:6px;top:14px;bottom:14px;width:2px;background:#98a2b3}
+.rr{position:absolute;top:-6px;bottom:-6px;width:0;border-left:2px dashed var(--heat);z-index:1;opacity:.75;pointer-events:none}
+.rr i{position:absolute;top:-9px;left:-6px;width:10px;height:10px;border-radius:50%;background:var(--heat);pointer-events:auto;cursor:help}.rr.go i{cursor:pointer}
+.rtk{position:relative;height:16px;margin:10px 6px 0;font-size:11px;color:var(--faint)}
+.rtk span{position:absolute;transform:translateX(-50%);white-space:nowrap}.rtk .tn{transform:translateX(-100%);color:var(--mut)}
+.rmore{position:absolute;left:-6px;top:-1px;border:0;background:var(--card);color:var(--mut);font:inherit;font-size:11px;cursor:pointer;padding:0 6px 0 0}.rmore:hover{color:var(--fg)}
+#rs.drag,#rs.drag *{cursor:ew-resize}
 @media(max-width:900px){#view{padding:16px}.vd,.wi{flex:1 1 100%}.tr{grid-template-columns:1fr}.tt{display:flex;gap:8px}.tt b{display:inline}.fr{grid-template-columns:90px 1fr 90px}.sr{grid-template-columns:120px 1fr 110px}.hm{gap:1px;grid-template-columns:52px repeat(24,minmax(0,1fr)) 40px}.hm i{height:18px}}
 </style></head>
 <body><div id="app"><aside id="side"></aside><main id="main"><div id="view"></div></main></div><div id="tip"></div>
@@ -1639,7 +1735,7 @@ const avTag=r=>r.av?'<span class="x up">можно было избежать</sp
 let S={c:ADMIN?-1:0,m:-1,e:-1,w:0,hv:false,hc:false,hm:0,xm:0,hh:0,ho:0,bd:null,md:0};
 /* доктор говорит только полезное: срезы этой недели (по клику — следующий); при выбранном effort — во что обошлась бы неделя */
 function mascHtml(all,vals,fc,BA,days){const wk=x=>fp(x/CAP[2]*100),sumT=(m,e)=>CH.reduce((s,ch)=>s+totals(ch,m,e).t,0),v=k=>vals.find(x=>x.m===k).t;
- const roi=P.since&&P.now?(all/1e6)/(P.plan*12/365*Math.max(1/24,(P.now-P.since)/86400)):0;
+ const roi=P.since&&P.now?(all/1e6)/(P.plan*12/365*Math.max(1/24,(perEnd()-P.since)/86400)):0;
  let cl=0,av=0,ag=0,big=null;CH.forEach(ch=>{const C=cc(ch,-1);cl+=C.pen;for(const k in C.rows)if(C.rows[k].av)av+=C.rows[k].pen;
   const T=totals(ch,-1,-1);ch.k.forEach((c,i)=>{const x=T.cs[i][0];if(c[9])ag+=x;if(!big||x>big.x)big={x,t:c[0],ch}})});
  const dsum=k=>days[k].reduce((s,x)=>s+x,0),dk=Object.keys(days).sort((a,b)=>dsum(b)-dsum(a))[0],mxT=sumT(-1,4);
@@ -1679,13 +1775,34 @@ function face(st){const X=(cx,cy,f,k)=>{const a=3.4*k,w=1.3*k;return `<path d="M
  return `<svg viewBox="-3 -9 38 44"${sh} aria-hidden="true"><rect width="32" height="32" rx="8" fill="#15181d"/>${eyes}${m}${extra}</svg>`}
 let MQ=[],MT=[],MI=0,MCL=false;const LIVE=/^https?:$/.test(location.protocol);
 function rescan(b){b.disabled=true;b.textContent='Снимаю данные…';location.href='/rescan'}
-/* период отчёта: в админке (--serve) — переключатель; сервер пересобирает страницу из уже прочитанных логов */
-const PERS=[['1','Сутки','последние 24 часа'],['2','2 дня','последние 48 часов'],['w','Неделя','неделя лимита Claude: с последнего сброса, если он известен, иначе 7 дней']];
-const perK=()=>(P.per||['w'])[0];
-function perTitle(){const p=perK();return p==='1'?'за сутки':p==='2'?'за 2 дня':p==='s'?'с '+fdd(P.since):p==='all'?'за всё время':p==='d'?'за '+P.per[1]+' сут.':P.cal&&P.cal.week0===P.since?'за неделю':'за 7 дней'}
-function perSeg(){if(!LIVE)return '';const p=perK(),t=new Date(),mx=t.getFullYear()+'-'+z2(t.getMonth()+1)+'-'+z2(t.getDate());
- return `<div class="pers"><div class="seg">${PERS.map(([v,n,tp])=>`<button class="${p===v?'on':''}" data-tip="${ea(tp)}" onclick="goPer('${v}')">${n}</button>`).join('')}<label class="${p==='s'?'on':''}" data-tip="${ea('с начала выбранного дня и до сейчас')}">с даты <input type="date" max="${mx}" value="${p==='s'?P.per[1]:''}" onchange="if(this.value)goPer('s',this.value)"></label></div></div>`}
-function goPer(v,d){document.body.classList.add('busy');location.href='/period?p='+v+(d?'&d='+d:'')}
+/* период (админка, --serve): кнопки, поля «от / до» и полоса дней — про одно и то же; сервер пересобирает страницу из логов в памяти */
+const PERS=[['1','Сутки','последние 24 часа'],['2','2 дня','последние 48 часов'],['7','Неделя','последние 7 дней'],['all','Всё время','всё, что есть в логах этого компьютера']];
+const perK=()=>(P.per||['w'])[0],DAY=86400,WDS=['вс','пн','вт','ср','чт','пт','сб'],perEnd=()=>Math.min(P.until||P.now,P.now);
+const fdW2=t=>WDS[D(t).getDay()]+' '+fdd(t),isoD=t=>{const d=D(t);return d.getFullYear()+'-'+z2(d.getMonth()+1)+'-'+z2(d.getDate())};
+function perTitle(){const p=perK(),past=P.until&&P.until<P.now;return p==='1'?'за сутки':p==='2'?'за 2 дня':p==='7'?'за неделю':p==='all'?'за всё время':p==='r'||p==='s'?(past?(isoD(P.since)===isoD(P.until-1)?'за '+fdd(P.since):'с '+fdd(P.since)+' по '+fdd(P.until-1)):'с '+fdd(P.since)):p==='d'?'за '+P.per[1]+' сут.':P.cal&&P.cal.week0===P.since?'за неделю лимита':'за 7 дней'}
+const cq=()=>S.c>=0&&CH[S.c]?'&c='+encodeURIComponent(CH[S.c].id):'';
+function goPer(v){document.body.classList.add('busy');location.href='/period?p='+v+cq()}
+function goRange(f,t){document.body.classList.add('busy');location.href='/period?p=r&from='+f+'&to='+t+cq()}
+let RW=null;   /* полоса: первый показанный день (null — последние ~45 дней, но так, чтобы начало периода было видно) */
+function rngLab(){const a=P.since,b=perEnd(),d=(b-a)/DAY,tm=D(a).getHours()||D(a).getMinutes(),k=Math.round(d),live=b>=P.now-120;
+ if(!tm&&!live)return `${fdW2(a)}${k>1?' — '+fdW2(b-1):''} · ${k} ${pl(k,'день','дня','дней')}`;
+ return `${fdW2(a)}${tm?' '+fh(a):''} — ${live?'сейчас':fdW2(b-1)} · ${d<1.5?fI(d*24)+' ч':fI(d)+' '+pl(k,'день','дня','дней')}`}
+function rngHtml(){if(!LIVE||!ADMIN||!P.strip||!P.strip.v.length)return '';const Z=P.strip,N=Z.v.length,a=P.since,b=perEnd();
+ const ia=Math.max(0,Math.floor((a-Z.d0)/DAY)),w0=RW!==null?RW:Math.max(0,Math.min(ia-2,N-45));RW=w0;
+ const V=Z.v.slice(w0),n=V.length,t0=Z.d0+w0*DAY,T=V.map(v=>v[0]+v[1]+v[2]+v[3]),mx=Math.max(1,...T),x=t=>Math.max(0,Math.min(100,(t-t0)/(n*DAY)*100));
+ const bars=V.map((v,i)=>{const s=t0+i*DAY,on=s+DAY>a&&s<b,tt=T[i]*1e3;
+  return `<i class="${on?'on':''}" data-tip="${ea(`<b>${fdW2(s)}</b>: `+(tt?`${fp(tt/CAP[1]*100)}% лимита за сутки · ${fh2(tt)} ≈ ${fUSD(tt)}<div class="cw m">`+v.map((y,m)=>y>0?`<span class="dot" style="--c:${CL[m]}"></span>${NM[m]} ${f1(y/T[i]*100)}%`:'').filter(Boolean).join(' · ')+'</div>':'вызовов нет')+'<div class="cw m">нажми — этот день, тяни — несколько дней</div>')}">${v.map((y,m)=>y>0?`<u style="height:${y/mx*100}%;background:${CL[m]}"></u>`:'').join('')}</i>`}).join('');
+ let rs='';if(P.cal&&P.cal.week0&&n<=70){const W7=7*DAY;let r=P.cal.week0;while(r>P.now)r-=W7;for(let k=0;r>t0;r-=W7,k++)if(r<t0+n*DAY)rs+=`<b class="rr${k?'':' go'}" style="left:${x(r)}%"><i data-tip="${ea(`Сброс недельного лимита Claude: ${fdW2(r)} ${fh(r)}`+(k?'':'.<div class="cw m">нажми — неделя лимита с этого сброса до сейчас</div>'))}"${k?'':` onclick="goPer('w')"`}></i></b>`}
+ let tk='';for(let i=0;i<n-3;i++){const s=t0+i*DAY;if(D(s).getDay()===1&&(n<=70||Math.round((s-Z.d0)/DAY/7)%2===0)&&(!w0||i>4))tk+=`<span style="left:${(i+.5)/n*100}%">${fdd(s)}</span>`}
+ tk+=`<span class="tn" style="left:100%">сегодня</span>`;
+ const more=w0>0?`<button class="rmore" onclick="RW=0;draw()" data-tip="${ea('Показать на полосе всю историю логов: с '+fdW2(Z.d0))}">← раньше</button>`:'';
+ const mn=isoD(Z.d0),mxD=isoD(P.now),pk=perK();
+ return `<div class="card rng"><div class="rtop"><div class="seg">${PERS.map(([v,nm,tp])=>`<button class="${pk===v?'on':''}" data-tip="${ea(tp)}" onclick="goPer('${v}')">${nm}</button>`).join('')}</div>
+  <div class="rlab" id="rlab">${rngLab()}</div>
+  <div class="rin"><label>от<input type="date" id="rfrom" min="${mn}" max="${mxD}" value="${isoD(a)}"></label><label>до<input type="date" id="rto" min="${mn}" max="${mxD}" value="${isoD(b-1)}"></label></div></div>
+  <div class="rs" id="rs"><div class="rbars">${bars}</div>${rs}<div class="rb" style="left:${x(a)}%;width:${Math.max(.6,x(b)-x(a))}%"></div><div class="rh" style="left:${x(a)}%" data-h="0"></div><div class="rh" style="left:${x(b)}%" data-h="1"></div></div>
+  <div class="rtk">${more}${tk}</div>
+  <div class="cap" style="margin:8px 0 0">Столбик — день: высота — сколько съедено, цвет — модель. Нажми на день или протяни по полосе мышкой — выберешь дни; белые ручки двигают края. Пунктир — сброс недельного лимита Claude.</div></div>`}
 const fUSD=x=>'$'+(x<1e7?f1(x/1e6):fI(x/1e6));
 /* формат */
 const f1=x=>x.toLocaleString('ru-RU',{maximumFractionDigits:1}),fM=x=>f1(x/1e6),fI=x=>Math.round(x).toLocaleString('ru-RU');
@@ -1700,7 +1817,9 @@ const pl=(n,a,b,c)=>{const m=n%10,h=n%100;return m===1&&h!==11?a:m>=2&&m<=4&&(h<
 const W=x=>x/CAP[S.w]*100;
 /* расчёт */
 const ctx=c=>c[3]+c[4]+c[5]+c[6];
-function cost(c,sm,se){const m=sm<0?c[1]:sm,e0=c[2]<0?1:c[2],e=se<0?e0:se,p=PR[m],om=MU[m][e]/MU[c[1]][e0];
+/* цены вызова: своей версии модели, в сценарии «на другой модели» — самой новой версии семейства; у Haiku 5.5 выше порога — вторая четвёрка */
+const prw=(c,m)=>{const r=PR[m===undefined||m<0||m===c[1]?c[12]:P.latest[m]];return r.length>4&&ctx(c)>r[4]?r.slice(5):r};
+function cost(c,sm,se){const m=sm<0?c[1]:sm,e0=c[2]<0?1:c[2],e=se<0?e0:se,p=prw(c,sm),om=MU[m][e]/MU[c[1]][e0];
  const rd=c[6]*p[2],wr=c[3]*p[0]+c[4]*p[0]*1.25+c[5]*p[3],ou=c[7]*om*p[1];return [rd+wr+ou,rd,wr,ou]}
 function totals(ch,sm,se){const k=sm+'|'+se;ch._t=ch._t||{};if(ch._t[k])return ch._t[k];let t=0;const cs=ch.k.map(c=>{const x=cost(c,sm,se);t+=x[0];return x});return ch._t[k]={t,cs}}
 function mixOf(ch,sm,se){const T=totals(ch,sm,se),m=[0,0,0,0];ch.k.forEach((c,i)=>{m[sm<0?c[1]:sm]+=T.cs[i][0]});return m}
@@ -1710,15 +1829,15 @@ function ci(ch){if(ch._ci)return ch._ci;const K=ch.k,main=[];K.forEach((c,i)=>{i
  for(let p=1;p<main.length;p++){const i=main[p],c=K[i],pc=K[main[p-1]],Wr=c[4]+c[5],x=ctx(c),xp=ctx(pc),gap=c[0]-pc[0];
   /* причина: компакт (контекст меньше 60%) → пауза от 59 мин (TTL кэша — час; после неё кэш умер бы и без смены модели)
      → смена модели → обновление Claude Code → подчистка (меньше 90%) → пауза при кэше на 5 минут → не видно */
-  if(Wr>=Math.max(P.cold.min_write,P.cold.min_share*x))ev.push({i,p,W:Wr,x,xp,sw:c[1]!==pc[1],gap,
-   cs:x<.6*xp?'cmp':gap>=3540?'idle':c[1]!==pc[1]?'sw':c[11]?'upd':x<.9*xp?'cmp':gap>=300&&pc[4]>pc[5]?'ttl5':'unk'})}
+  if(Wr>=Math.max(P.cold.min_write,P.cold.min_share*x))ev.push({i,p,W:Wr,x,xp,sw:c[12]!==pc[12],gap,
+   cs:x<.6*xp?'cmp':gap>=3540?'idle':c[12]!==pc[12]?'sw':c[11]?'upd':x<.9*xp?'cmp':gap>=300&&pc[4]>pc[5]?'ttl5':'unk'})}
  ev.forEach((e,k)=>{e.end=k+1<ev.length?ev[k+1].p:main.length});
  return ch._ci={main,ev,g,floor:main.length?ctx(K[main[0]]):0}}
 function cc(ch,sm){ch._cc=ch._cc||{};if(ch._cc[sm])return ch._cc[sm];const I=ci(ch),K=ch.k;let pen=0,sav=0;const rows={};
- I.ev.forEach(e=>{const c=K[e.i],m=sm<0?c[1]:sm,p=PR[m],pw=(c[4]*p[0]*1.25+c[5]*p[3])/e.W,pe=Math.max(0,e.W-I.g)*(pw-p[2]);pen+=pe;
-  const pm=sm<0?K[I.main[e.p-1]][1]:sm,pp=PR[pm],xn=I.floor+SUM,gi=Math.max(0,e.x-e.xp),dl=e.xp-xn;let sv=0;
+ I.ev.forEach(e=>{const c=K[e.i],p=prw(c,sm),pw=(c[4]*p[0]*1.25+c[5]*p[3])/e.W,pe=Math.max(0,e.W-I.g)*(pw-p[2]);pen+=pe;
+  const pp=prw(K[I.main[e.p-1]],sm),xn=I.floor+SUM,gi=Math.max(0,e.x-e.xp),dl=e.xp-xn;let sv=0;
   if(dl>0&&e.cs!=='cmp'){const old=e.W*pw+c[6]*p[2],cmp=e.xp*pp[2]+SUM*pp[1],nw=(xn+gi)*p[3];let fl=0;
-   for(let q=e.p+1;q<e.end;q++){const mj=sm<0?K[I.main[q]][1]:sm;fl+=dl*PR[mj][2]}sv=old-(cmp+nw)+fl}
+   for(let q=e.p+1;q<e.end;q++)fl+=dl*prw(K[I.main[q]],sm)[2];sv=old-(cmp+nw)+fl}
   sav+=sv;rows[e.i]={pen:pe,sv,sw:e.sw,gap:e.gap,cs:e.cs,av:CAU[e.cs].av||(e.cs==='idle'&&sv>0)}});
  return ch._cc[sm]={pen,sav,rows,I}}
 /* разложение цены вызова на четыре части */
@@ -1737,7 +1856,7 @@ function hzAll(){const a={ht:0,tot:0,c:{},s:{}};CH.forEach(ch=>{const z=hz(ch);i
 /* куски страницы */
 const seg=(g,names,off)=>`<div class="seg">${names.map((n,i)=>`<button data-g="${g}" data-v="${i+off}" class="${S[g]===i+off?'on':''}">${n}</button>`).join('')}</div>`;
 const scnName=()=>(S.m<0?'модели как были':'на '+NM[S.m])+(S.e<0?'':', effort '+EN[S.e]);
-const HTT=`<b>Хайку-токен (ХТ)</b> — единица цены: 1 ХТ равен одному входному токену Haiku, остальное пересчитано в него. Лимит плана Max за 5 часов ≈ ${fM(CAP[0])} млн ХТ, за неделю ≈ ${f1(CAP[2]/1e9)} млрд ХТ, за сутки — неделя ÷ 7 (оценка).`;
+const HTT=`<b>Хайку-токен (ХТ)</b> — единица цены: 1 ХТ = $1 за миллион токенов по ценам API (так стоил вход Haiku 4.5); каждый вызов пересчитан по цене своей версии модели. Лимит плана Max за 5 часов ≈ ${fM(CAP[0])} млн ХТ, за неделю ≈ ${f1(CAP[2]/1e9)} млрд ХТ, за сутки — неделя ÷ 7 (оценка).`;
 const dd=k=>{const d=(k-1)*100;return Math.abs(d)<0.5?'<span class="x">так же</span>':`<span class="x ${d>0?'up':'dn'}">${d>0?'+':'−'}${fx(Math.abs(d))}%</span>`};
 const ddt=k=>{const d=(k-1)*100;return Math.abs(d)<0.5?'столько же, сколько было':d>0?`на ${fx(d)}% дороже, чем было`:`на ${fx(-d)}% дешевле, чем было`};
 const EFT='<b>Effort</b> — сколько модель думает перед ответом. Меняет только «ответы и мысли». По замерам на 11 тыс. вызовов (тот же размер контекста, против medium): low ≈ ×0,65, high ≈ ×1,1, xhigh ≈ ×1,5 (у Sonnet ×2), max ≈ ×3,5 (у Sonnet ×4,6). У Haiku effort нет.';
@@ -1785,8 +1904,8 @@ const rz=v=>{const s=fx(v);return s.includes(',')?s+' раза':s+' '+pl(Math.ro
 function tipCall(ch,i){const c=ch.k[i],scn=S.m>=0||S.e>=0,x=cost(c,-1,-1),sp=split(ch,i,-1,-1),t=x[0]||1,r=cc(ch,-1).rows[i];
  const eff=c[1]===0?'':` · effort ${c[2]<0?'не записан':EN[c[2]]}`,q=t/(totals(ch,-1,-1).t/ch.k.length);
  /* контекстное окно: 1 млн токенов, у Haiku — 200 тыс.; полоска-светофор, незаполненное — серым */
- const win=c[1]===0?2e5:1e6,fill=Math.min(1,ctx(c)/win);
- let h=`<div><span class="dot" style="--c:${CL[c[1]]}"></span><b>${NM[c[1]]}</b>${eff}${c[9]?' · агент':''}</div><div class="m">вызов № ${i+1} · ${fd(c[0])}</div>
+ const win=P.win200.includes(c[12])?2e5:1e6,fill=Math.min(1,ctx(c)/win);
+ let h=`<div><span class="dot" style="--c:${CL[c[1]]}"></span><b>${P.pname[c[12]]||NM[c[1]]}</b>${eff}${c[9]?' · агент':''}</div><div class="m">вызов № ${i+1} · ${fd(c[0])}</div>
  <div style="margin-top:6px">${q>=1.15?`<b>в ${rz(q)} дороже</b> среднего вызова этого чата`:q<=.87?`<b>в ${rz(1/q)} дешевле</b> среднего вызова этого чата`:'<b>как средний вызов</b> этого чата'} <span class="m">· ${fh2(x[0])}</span></div>
  <div class="tb">${sp.map((v,j)=>v>0?`<i style="width:${v/t*100}%;background:${BK[j].c}"></i>`:'').join('')}</div>
  <div class="m">${sp.map((v,j)=>v/t>=.005?`${BK[j].n.toLowerCase()} ${f1(v/t*100)}%`:'').filter(Boolean).join(' · ')}</div>
@@ -1830,7 +1949,7 @@ const NOTES=()=>`<div class="card notes"><h2>Как это читать</h2>
 /* страница чата */
 function chatView(ch){const n=ch.k.length,A=totals(ch,-1,-1),scn=S.m>=0||S.e>=0,T=scn?totals(ch,S.m,S.e):A,ag=ch.k.filter(c=>c[9]).length;
  const vals=[-1,0,1,2,3].map(m=>{const t=totals(ch,m,S.e).t;return {m,t,k:t/A.t,mix:m<0?mixOf(ch,-1,S.e):null}});
- return `<h1>${esc(ch.title)}</h1><div class="meta">${fd(ch.k[0][0])} → ${fd(ch.k[n-1][0])} · ${n} ${pl(n,'вызов','вызова','вызовов')} модели${ag?`, из них ${ag} — агенты`:''}</div>
+ return `<h1>${esc(ch.title)}</h1><div class="meta">${fd(ch.k[0][0])} → ${fd(ch.k[n-1][0])} · ${n} ${pl(n,'вызов','вызова','вызовов')} модели${ag?`, из них ${ag} — агенты`:''}${ADMIN?` · в отчёте — ${perTitle()}`:''}</div>${rngHtml()}
  <div class="row top">${whatifCard(vals,true,'')}${verdictCard(A,T,scn,'Этот чат съел')}${compCard(bk(ch,-1,-1),A.t,scn?bk(ch,S.m,S.e):null,T.t,hvHtml(hz(ch),'hv','чата'),1)}</div>
  ${tapeHtml(ch,A,T,scn)}${coldHtml(ch,T)}${fitsHtml(ch)}${NOTES()}`}
 /* центральный дашборд */
@@ -1852,10 +1971,10 @@ function central(){const days={},dch={},sumT=(sm,se)=>CH.reduce((s,ch)=>s+totals
   <div class="dx"><div class="m">${fI(w[2])} ${pl(w[2],'вызов','вызова','вызовов')} модели · ${fM(w[0])} млн токенов, из них ${f1(w[1]/Math.max(1,w[0])*100)}% — чтение кэша · ${fh2(t)} ≈ ${fUSD(t)} по ценам API</div>${cs.map(row).join('')}</div></div>`}).join('');
  const top=CH.map((ch,i)=>i).slice(0,15).map(i=>{const a=AG[i];return `<div class="tc go-chat" data-i="${i}"><div class="n">${esc(CH[i].title)}</div><div class="k" style="width:${a.t/MX*100}%">${a.m.map((v,m)=>v>0?`<i style="width:${v/a.t*100}%;background:${CL[m]}"></i>`:'').join('')}</div><div class="r"><b style="color:var(--fg)">${fp(a.t/CAP[2]*100)}%</b> недели</div></div>`}).join('');
  const nk=CH.reduce((a,c)=>a+c.k.length,0);
- const per=P.since?(P.cal&&P.cal.week0===P.since?`неделя лимита Claude: с ${fd(P.since)}`:`с ${fd(P.since)}`)+' · ':'';
- const html=`<h1>Вся система ${perTitle()}</h1>${perSeg()}<div class="meta">${per}${CH.length} ${pl(CH.length,'чат','чата','чатов')} · ${fI(nk)} ${pl(nk,'вызов','вызова','вызовов')} модели · снимок логов ${GEN}${LIVE?'<button class="rsb" onclick="rescan(this)">↻ Снять данные</button>':''}</div>
- <div class="row top">${whatifCard(vals,false,(perK()==='w'?'Вся неделя':'Весь период')+' на одной модели. Чат по отдельности — в списке слева.')}<div class="card vd"><h2>Чаты в отчёте съели</h2><div class="big">≈${fp(all/CAP[2]*100)}%</div><div class="bl">недельного лимита</div><div class="mut" style="font-size:12.5px" data-tip="${ea('Размер лимита Claude не сообщает: 1% недели ≈ 12 млн ХТ по замерам автора (вилка 6–14). Проценты на странице приблизительные.')}">вилка ${fp(all/P.cap_week_fork[1]*100)}–${fp(all/P.cap_week_fork[0]*100)}%</div>
-  <div class="sub" data-tip="${ea(HTT)}">${fh2(all)}</div><div class="scn">сегодня: <b>${fp(today/CAP[1]*100)}%</b> лимита за сутки</div>${fcLine(all)}</div>
+ const per=P.since?(P.cal&&P.cal.week0===P.since?`неделя лимита Claude: с ${fd(P.since)}`:`с ${fd(P.since)}`+(P.until&&P.until<P.now?` по ${fd(P.until-60)}`:''))+' · ':'';
+ const html=`<h1>Вся система ${perTitle()}</h1><div class="meta">${per}${CH.length} ${pl(CH.length,'чат','чата','чатов')} · ${fI(nk)} ${pl(nk,'вызов','вызова','вызовов')} модели · снимок логов ${GEN}${LIVE?'<button class="rsb" onclick="rescan(this)">↻ Снять данные</button>':''}</div>
+ ${rngHtml()}<div class="row top">${whatifCard(vals,false,(perK()==='w'?'Вся неделя':'Весь период')+' на одной модели. Чат по отдельности — в списке слева.')}<div class="card vd"><h2>Чаты в отчёте съели</h2><div class="big">≈${fp(all/CAP[2]*100)}%</div><div class="bl">недельного лимита</div><div class="mut" style="font-size:12.5px" data-tip="${ea(`Размер лимита Claude не сообщает: 1% недели ≈ ${fM(CAP[2]/100)} млн ХТ по ночным замерам автора (вилка ${fM(P.cap_week_fork[0]/100)}–${fM(P.cap_week_fork[1]/100)}). Проценты на странице приблизительные.`)}">вилка ${fp(all/P.cap_week_fork[1]*100)}–${fp(all/P.cap_week_fork[0]*100)}%</div>
+  <div class="sub" data-tip="${ea(HTT)}">${fh2(all)}</div>${P.until&&P.until<P.now?'':`<div class="scn">сегодня: <b>${fp(today/CAP[1]*100)}%</b> лимита за сутки</div>`}${fcLine(all)}</div>
   ${roiCard(all)}${mascHtml(all,vals,fcPct(all),BA,days)}</div>
  ${hourHtml()}${expHtml()}${compCard(BA,all,null,0,hvHtml(hzAll(),'hc','системы'))}
  <div class="card"><h2>Расход по дням</h2><div class="cap" style="margin:0 0 8px">Пунктир — лимит за сутки (неделя ÷ 7). Цвет — модель. Нажми на день — какие чаты его съели, сколько токенов и долларов.</div>${dh}</div>
@@ -1956,8 +2075,8 @@ function heatHtml(){const H=P.heat;if(!H)return '';let rows=[],wk=1;
  return `<div class="card"><div class="tph"><h2>Когда горит лимит</h2>${seg('hm',[L1,'обычная неделя'],0)}</div>
  <div class="cap" style="margin:0 0 4px">${S.hm?`Дни недели в среднем за последние ${fI(H.days)} ${pl(Math.round(H.days),'день','дня','дней')} (с ${since}) — видно привычку: в какие дни и часы обычно горит лимит.`:`Строка — день, клетка — час.`} Чем ярче клетка, тем больше лимита съедено в этот час. Справа — весь день в % лимита за сутки. Наведи на клетку — сколько сгорело и какие чаты жрали.</div><div class="hm">${h}</div></div>`}
 /* подписка окупилась: те же вызовы по ценам API (1 ХТ = $1 за миллион) против доли подписки за те же дни */
-function roiCard(all){if(!P.since||!P.now)return '';const days=Math.max(1/24,(P.now-P.since)/86400),usd=all/1e6,sub=P.plan*12/365*days,k=usd/sub;
- const tip=`<b>${k>=1?'Подписка окупилась':'Подписка пока не окупилась'}</b><br>Те же вызовы по ценам Claude API стоили бы $${fI(usd)}. Подписка $${fI(P.plan)} в месяц — за эти ${f1(days)} дн. это $${fI(sub)}.<div class="cw m">Цены API за миллион входных токенов: Haiku $1, Sonnet $2, Opus $4, Fable $10, поэтому 1 ХТ = $1 за миллион. Считаются только чаты на этом компьютере. Цена плана — флаг --plan.</div>`;
+function roiCard(all){if(!P.since||!P.now)return '';const days=Math.max(1/24,(perEnd()-P.since)/86400),usd=all/1e6,sub=P.plan*12/365*days,k=usd/sub;
+ const tip=`<b>${k>=1?'Подписка окупилась':'Подписка пока не окупилась'}</b><br>Те же вызовы по ценам Claude API стоили бы $${fI(usd)}. Подписка $${fI(P.plan)} в месяц — за эти ${f1(days)} дн. это $${fI(sub)}.<div class="cw m">Цены API за миллион входных токенов у новых моделей: Haiku 5.5 $0,1, Sonnet 5.5 $2, Opus 5.5 $4, Fable 5.2 $8; старые версии — по своим ценам. 1 ХТ = $1 за миллион. Считаются только чаты на этом компьютере. Цена плана — флаг --plan.</div>`;
  return `<div class="card vd roi" data-tip="${ea(tip)}"><h2>${k>=1?'Подписка окупилась':'Подписка пока не окупилась'}</h2><div class="big">×${fx(k)}</div><div class="bl">за ${f1(days)} ${days%1?'дня':pl(days,'день','дня','дней')}</div>
  <div class="sub">по ценам API <b style="color:var(--fg)">$${fI(usd)}</b><br>подписка за эти дни $${fI(sub)}</div></div>`}
 /* прогноз к сбросу: средний темп с начала недели лимита, не раньше чем через 12 часов */
@@ -1993,7 +2112,7 @@ let CUM=null;
    время, поровну на часы промежутка (штриховка). Неделя Claude начинается с 0%: от сброса до первого замера — тоже промежуток */
 let HR=null;
 const NV='Claude считает весь аккаунт, а в логах этого компьютера видно не всё. Сюда попадает: другие люди и компьютеры на том же аккаунте, claude.ai в браузере и на телефоне, запуски без сохранения сессии (<b>claude -p --no-session-persistence</b>), служебные вызовы приложения. И ошибка оценки размера лимита: если он на деле меньше, наша доля больше.';
-function hourHtml(){const H=P.hrs;if(!P.since||!P.now||!H)return '';const W=CAP[2],now=P.now,S0=P.cal&&P.cal.week0>P.since?P.cal.week0:Math.max(P.since,P.now-7*86400),wk0=P.cal&&P.cal.week0===S0,W7=7*86400,NN=P.heat.names,PU='#7F77DD';
+function hourHtml(){const H=P.hrs;if(!P.since||!P.now||!H||(P.until&&P.until<P.now))return '';const W=CAP[2],now=P.now,S0=P.cal&&P.cal.week0>P.since?P.cal.week0:Math.max(P.since,P.now-7*86400),wk0=P.cal&&P.cal.week0===S0,W7=7*86400,NN=P.heat.names,PU='#7F77DD';
  if(!HR){HR=[];CH.forEach(ch=>{const T=totals(ch,-1,-1);ch.k.forEach((c,i)=>HR.push([c[0],T.cs[i][0]]))});HR.sort((a,b)=>a[0]-b[0])}
  const pc=(a,b)=>{let s=0;const m=Math.max(a,S0);for(const e of HR)if(e[0]>=m&&e[0]<b)s+=e[1];
   for(let j=0;j<H.v.length;j++){const t=H.t0+j*3600,ov=Math.min(t+3600,b,S0)-Math.max(t,a);if(ov>0)s+=H.v[j]*ov/3600}return s/W*100};
@@ -2043,8 +2162,8 @@ function sideDays(){const Z=brainData(),wk=Z.days.slice(-7);if(S.bd===null){S.bd
  return `<div class="it dy${S.bd===-1?' sel':''}" data-d="-1"><div class="t">${SYS}Неделя</div><div class="s">у компа ${fhM(wk.reduce((s,x)=>s+x.aw,0))}</div></div>`
   +Z.days.slice().reverse().map(x=>`<div class="it dy${S.bd===x.d?' sel':''}" data-d="${x.d}"><div class="t">${fdW(x.t)}</div><div class="s">${x.aw?fhM(x.aw)+' у компа':'тебя не было'}${x.res?' · ресурс '+fI(x.res)+'%':''}</div>${dayBar(x)}</div>`).join('')}
 function side(){const hb=P.brain&&P.brain.r.length,dv=hb&&S.md===1;$('side').innerHTML='<div class="sh">'+LOGO+'<div>'+APP+'<span>снимок логов '+GEN+'</span></div></div>'
- +(hb?'<div class="lvs">'+seg('md',['Токены','Мозготокены'],0)+'</div>':'')+(dv?sideDays():`<div class="it${S.c<0?' sel':''}" data-i="-1"><div class="t">${SYS}Вся система</div><div class="s">центральный дашборд ${P.cal&&P.cal.week0===P.since?'за неделю':'за период'}</div></div>`
- +CH.map((ch,i)=>{const a=AG[i];return `<div class="it${i===S.c?' sel':''}" data-i="${i}"><div class="t">${esc(ch.title)}</div><div class="s">${fp(a.t/CAP[2]*100)}% за неделю · ${ch.k.length} ${pl(ch.k.length,'вызов','вызова','вызовов')}</div><div class="mx" style="width:${Math.max(4,a.t/MX*100)}%">${a.m.map((v,m)=>v>0?`<i style="width:${v/a.t*100}%;background:${CL[m]}"></i>`:'').join('')}</div></div>`}).join(''))}
+ +(hb?'<div class="lvs">'+seg('md',['Токены','Мозготокены'],0)+'</div>':'')+(dv?sideDays():`<div class="it${S.c<0?' sel':''}" data-i="-1"><div class="t">${SYS}Вся система</div><div class="s">центральный дашборд ${perTitle()}</div></div>`
+ +CH.map((ch,i)=>{const a=AG[i];return `<div class="it${i===S.c?' sel':''}" data-i="${i}"><div class="t">${esc(ch.title)}</div><div class="s">${fp(a.t/CAP[2]*100)}% недели · ${ch.k.length} ${pl(ch.k.length,'вызов','вызова','вызовов')}</div><div class="mx" style="width:${Math.max(4,a.t/MX*100)}%">${a.m.map((v,m)=>v>0?`<i style="width:${v/a.t*100}%;background:${CL[m]}"></i>`:'').join('')}</div></div>`}).join(''))}
 function draw(){document.body.classList.toggle('adm',ADMIN);if(ADMIN)side();$('view').innerHTML=S.md===1&&P.brain&&P.brain.r.length?brainPage():S.c<0?central():chatView(CH[S.c])}
 document.addEventListener('click',ev=>{const b=ev.target.closest('button[data-g]');if(b){S[b.dataset.g]=+b.dataset.v;draw();return}
  const dy=ev.target.closest('.dy');if(dy){S.bd=+dy.dataset.d;draw();$('main').scrollTop=0;return}
@@ -2055,11 +2174,28 @@ document.addEventListener('toggle',ev=>{const d=ev.target;if(d.classList&&d.clas
 let HL=null;
 document.addEventListener('mouseover',ev=>{const e=ev.target.closest('.ev');if(HL){HL.classList.remove('hl');HL=null}
  if(e){HL=document.querySelector('.sl[data-i="'+e.dataset.i+'"]');if(HL)HL.classList.add('hl')}});
-document.addEventListener('mousemove',ev=>{const t=$('tip'),sl=ev.target.closest('.sl'),dt=ev.target.closest('[data-tip]');let h=null;
+document.addEventListener('mousemove',ev=>{const t=$('tip'),sl=ev.target.closest('.sl'),dt=ev.target.closest('[data-tip]');let h=null;if($('rs')&&$('rs').classList.contains('drag')){t.style.display='none';return}
  if(sl&&S.c>=0)h=tipCall(CH[S.c],+sl.dataset.i);else if(dt)h=dt.dataset.tip;
  if(!h){t.style.display='none';return}
  t.innerHTML=h;t.style.display='block';let x=ev.clientX+16,y=ev.clientY+16;
  if(x+t.offsetWidth>innerWidth-8)x=ev.clientX-t.offsetWidth-16;if(y+t.offsetHeight>innerHeight-8)y=Math.max(8,ev.clientY-t.offsetHeight-16);t.style.left=x+'px';t.style.top=y+'px'});
+/* полоса дней: нажал — день, протянул — дни, ручка — край; отпустил — сервер собирает страницу за эти дни */
+document.addEventListener('pointerdown',ev=>{const rs=ev.target.closest('#rs');if(!rs||ev.target.closest('.rr')||ev.button>0)return;ev.preventDefault();
+ const Z=P.strip,bars=rs.querySelector('.rbars'),R=bars.getBoundingClientRect(),n=bars.children.length,w0=RW,h=ev.target.closest('.rh');
+ const di=cx=>Math.max(0,Math.min(n-1,Math.floor((cx-R.left)/R.width*n))),day=i=>Z.d0+(w0+i)*DAY;
+ let i0=Math.max(0,Math.floor((P.since-Z.d0)/DAY)-w0),i1=Math.min(n-1,Math.floor((perEnd()-1-Z.d0)/DAY)-w0),moved=false;
+ const anchor=h?(h.dataset.h==='0'?i1:i0):di(ev.clientX);if(!h)i0=i1=anchor;
+ const paint=()=>{[...bars.children].forEach((b,i)=>b.classList.toggle('on',i>=i0&&i<=i1));const L=i0/n*100,Wd=(i1+1-i0)/n*100,hs=rs.querySelectorAll('.rh'),bd=rs.querySelector('.rb');
+  bd.style.left=L+'%';bd.style.width=Wd+'%';hs[0].style.left=L+'%';hs[1].style.left=(L+Wd)+'%';
+  let s=0;for(let i=i0;i<=i1;i++){const v=Z.v[w0+i];s+=(v[0]+v[1]+v[2]+v[3])*1e3}const k=i1-i0+1;
+  $('rlab').innerHTML=`${fdW2(day(i0))}${k>1?' — '+fdW2(day(i1)):''} · ${k} ${pl(k,'день','дня','дней')} · <b>≈${fp(s/CAP[2]*100)}%</b> недели · ${fUSD(s)}`;
+  $('rfrom').value=isoD(day(i0));$('rto').value=isoD(day(i1))};
+ if(!h)paint();rs.classList.add('drag');$('tip').style.display='none';
+ const mv=e=>{const j=di(e.clientX);moved=true;i0=Math.min(anchor,j);i1=Math.max(anchor,j);paint()};
+ const up=()=>{removeEventListener('pointermove',mv);removeEventListener('pointerup',up);rs.classList.remove('drag');if(h&&!moved)return;goRange(isoD(day(i0)),isoD(day(i1)))};
+ addEventListener('pointermove',mv);addEventListener('pointerup',up)});
+document.addEventListener('change',ev=>{if(ev.target.id!=='rfrom'&&ev.target.id!=='rto')return;const f=$('rfrom').value,t=$('rto').value;if(f&&t)goRange(f<t?f:t,f<t?t:f)});
+{const h=location.hash.match(/c=([\w-]+)/);if(h&&ADMIN){const i=CH.findIndex(ch=>ch.id===h[1]);if(i>=0)S.c=i}}
 draw();
 </script></body></html>
 """
